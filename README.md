@@ -77,5 +77,5 @@ python -m http.server 8765 --bind 127.0.0.1
 
 ## 授權
 
-尚未指定授權條款，請在公開前補上 `LICENSE`。
+本專案以 [MIT License](LICENSE) 授權。
 `ssd1306.py` 與 `ble_advertising.py` 源自 MicroPython 專案範例 / 驅動（MIT），請保留其原始版權標示。
