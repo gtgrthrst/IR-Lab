@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>IR 紅外線學習 / 發送</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; background: #101827; color: #e8eef8; }
+    main { max-width: 760px; margin: auto; padding: 24px 18px 40px; }
+    h1 { margin: 0 0 6px; font-size: 25px; } h2 { margin: 0 0 12px; font-size: 17px; }
+    .muted { color: #9eacc1; font-size: 13px; }
+    .card { background: #182337; border: 1px solid #2a3a56; border-radius: 18px; padding: 18px; margin-top: 16px; }
+    button { border: 0; border-radius: 12px; padding: 11px 14px; font-size: 15px; font-weight: 700; color: white; background: #2859c7; cursor: pointer; }
+    button:disabled { opacity: .45; cursor: default; }
+    .secondary { background: #40516e; } .danger { background: #9d3a50; } .ok { background: #23805a; }
+    input, select { background: #0f1828; color: inherit; border: 1px solid #2a3a56; border-radius: 10px; padding: 9px 10px; font-size: 15px; min-width: 0; }
+    .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; }
+    .row label { display: flex; gap: 6px; align-items: center; font-size: 14px; }
+    #status { font-weight: 700; } .on { color: #62e6a1; } .off { color: #ff9a9a; }
+    .code { font-family: ui-monospace, Consolas, monospace; font-size: 14px; word-break: break-all; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }
+    th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #2a3a56; vertical-align: middle; }
+    th { color: #9eacc1; font-weight: 600; font-size: 12px; }
+    td input { width: 100%; box-sizing: border-box; }
+    td.act { white-space: nowrap; } td.act button { padding: 7px 10px; font-size: 13px; }
+    canvas { width: 100%; height: 70px; background: #0f1828; border-radius: 10px; margin-top: 10px; }
+    #log { margin-top: 14px; color: #9eacc1; font-size: 13px; min-height: 18px; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>IR 紅外線學習 / 發送</h1>
+  <div class="muted">Pico W · BLE「IRLab」· RX = GPIO8、TX = GPIO9</div>
+
+  <div class="card">
+    <div class="row" style="margin-top:0">
+      <button id="connect">連線裝置</button>
+      <span id="status" class="off">離線</span>
+      <label class="muted">載波
+        <select id="freq"><option>38000</option><option>36000</option><option>40000</option><option>56000</option></select> Hz
+      </label>
+    </div>
+    <div id="log">尚未連線</div>
+  </div>
+
+  <div class="card">
+    <h2>① 接收並記錄</h2>
+    <div class="row" style="margin-top:0">
+      <button id="rec" disabled>開始接收</button>
+      <button id="stop" class="secondary" disabled>停止</button>
+      <button id="clearCap" class="danger">清除</button>
+      <label><input type="checkbox" id="cont" checked> 連續接收</label>
+      <label><input type="checkbox" id="auto"> 收到後自動記錄</label>
+    </div>
+    <div id="capState" class="muted" style="margin-top:12px">尚未接收</div>
+    <canvas id="wave" width="700" height="70"></canvas>
+    <div id="capInfo" class="code" style="margin-top:10px"></div>
+    <div class="row">
+      <input id="capName" placeholder="名稱（例：電源）" style="flex:1">
+      <button id="save" class="ok" disabled>記錄這筆</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>② 發送測試</h2>
+    <table id="tbl">
+      <thead><tr><th>#</th><th>名稱</th><th>協定 / 碼</th><th>脈衝</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div id="empty" class="muted" style="margin-top:10px">尚無記錄</div>
+    <div class="row">
+      <label>重複次數 <select id="rep"><option>1</option><option>2</option><option>3</option><option>5</option></select></label>
+    </div>
+    <div class="row">
+      <span class="muted">手動 NEC：</span>
+      位址 0x<input id="nAddr" value="00" size="3"> 命令 0x<input id="nCmd" value="45" size="3">
+      <button id="nSend" class="secondary" disabled>發送</button>
+      <button id="nSave" class="secondary">加入記錄</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>③ 匯出</h2>
+    <div class="row" style="margin-top:0">
+      <button id="expJson" class="secondary">匯出 JSON</button>
+      <button id="expCsv" class="secondary">匯出 CSV</button>
+      <button id="imp" class="secondary">匯入 JSON</button>
+      <button id="clear" class="danger">清除全部</button>
+      <input type="file" id="file" accept=".json" hidden>
+    </div>
+    <div class="muted" style="margin-top:10px">記錄存在瀏覽器本機（localStorage）；原始時序單位為 µs，mark/space 交替、mark 開頭。</div>
+  </div>
+</main>
+
+<script>
+const SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+const RXC = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';  // 網頁 -> 裝置
+const TXC = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';  // 裝置 -> 網頁
+const $ = id => document.getElementById(id);
+const log = m => $('log').textContent = m;
+let device, rxChar, busy = Promise.resolve();
+let records = JSON.parse(localStorage.getItem('irRecords') || '[]');
+let capture = null;           // 目前接收到、尚未記錄的資料
+let incoming = null;          // 組裝中 {expect, units}
+let wantRec = false;
+let incomingAt = 0, armAt = 0;  // 看門狗：組裝逾時 / 等待 REC:ON 逾時
+const arm = () => { armAt = Date.now(); return writeCmd('REC').catch(e => log('傳送 REC 失敗：' + e.message)); };
+
+/* ---------- BLE ---------- */
+async function writeCmd(text) {
+  const bytes = new TextEncoder().encode(text);
+  // 前一筆失敗不可讓後續全部失敗（否則一次 GATT 錯誤後再也送不出 REC）
+  const op = busy.catch(() => {}).then(async () => {
+    for (let i = 0; i < bytes.length; i += 20) await rxChar.writeValueWithResponse(bytes.slice(i, i + 20));
+    await rxChar.writeValueWithResponse(new TextEncoder().encode('END'));
+  });
+  busy = op;
+  return op;
+}
+function setConnected(on) {
+  ['rec', 'stop', 'nSend'].forEach(id => $(id).disabled = !on);
+  $('status').textContent = on ? '已連線' : '離線'; $('status').className = on ? 'on' : 'off';
+  $('connect').textContent = on ? '已連線' : '連線裝置';
+  renderTable();
+}
+async function connect() {
+  if (!navigator.bluetooth) return log('此瀏覽器不支援 Web Bluetooth，請用 Chrome / Edge');
+  try {
+    device = await navigator.bluetooth.requestDevice({ filters: [{ services: [SERVICE] }] });
+    device.addEventListener('gattserverdisconnected', () => { wantRec = false; setConnected(false); log('裝置已斷線'); });
+    const server = await device.gatt.connect();
+    const svc = await server.getPrimaryService(SERVICE);
+    rxChar = await svc.getCharacteristic(RXC);
+    const tx = await svc.getCharacteristic(TXC);
+    tx.addEventListener('characteristicvaluechanged', e => onLine(new TextDecoder().decode(e.target.value)));
+    await tx.startNotifications();
+    setConnected(true); log('已連線：' + (device.name || 'BLE 裝置'));
+  } catch (e) { log('連線失敗：' + e.message); }
+}
+function onLine(s) {
+  if (s.startsWith('REC:ON')) { armAt = 0; $('capState').textContent = '等待紅外線訊號…請對 GPIO8 接收頭按遙控器'; }
+  else if (s.startsWith('REC:OFF')) { if (!incoming) $('capState').textContent = '已停止'; }
+  else if (s.startsWith('IRB:')) { incoming = { expect: parseInt(s.slice(4)), units: [] }; incomingAt = Date.now(); }
+  else if (s.startsWith('D:') && incoming) s.slice(2).split(',').filter(Boolean).forEach(v => incoming.units.push(parseInt(v)));
+  else if (s.startsWith('IRE') && incoming) finishCapture();
+  else if (s.startsWith('SENT:')) log('發送完成（' + s.slice(5) + ' 段）');
+  else if (s.startsWith('ERR:')) log('裝置回報錯誤：' + s);
+}
+function finishCapture() {
+  const inc = incoming; incoming = null;
+  if (inc.units.length !== inc.expect) { $('capState').textContent = `封包遺失（${inc.units.length}/${inc.expect}），請重按一次`; }
+  else {
+    capture = { freq: +$('freq').value, raw: inc.units.map(v => v * 10) };
+    Object.assign(capture, decode(capture.raw));
+    showCapture();
+    if ($('auto').checked) addRecord(capture, $('capName').value.trim());
+  }
+  if (wantRec && $('cont').checked) arm(); else wantRec = false;
+}
+
+/* ---------- 解碼 / 產生 ---------- */
+function near(v, t, tol = 0.3) { return Math.abs(v - t) <= t * tol; }
+function decode(raw) {
+  if (raw.length >= 66 && near(raw[0], 9000) && near(raw[1], 4500)) {
+    let v = 0;
+    for (let i = 0; i < 32; i++) { const sp = raw[3 + i * 2]; if (sp > 1100) v += 2 ** i; }
+    const a = v & 255, ia = (v >>> 8) & 255, c = (v >>> 16) & 255, ic = (v >>> 24) & 255;
+    const std = (a ^ ia) === 255;
+    if (std && (c ^ ic) === 255) return { proto: 'NEC', code: `A=0x${hex(a)} C=0x${hex(c)}`, addr: a, cmd: c };
+    return { proto: 'NEC-ext', code: '0x' + (v >>> 0).toString(16).padStart(8, '0') };
+  }
+  if (raw.length <= 4 && near(raw[0], 9000) && near(raw[1], 2250)) return { proto: 'NEC-repeat', code: '' };
+  return { proto: 'RAW', code: raw.length + ' 段' };
+}
+const hex = n => n.toString(16).toUpperCase().padStart(2, '0');
+function buildNec(addr, cmd) {
+  const d = (addr | ((addr ^ 255) << 8) | (cmd << 16) | ((cmd ^ 255) << 24)) >>> 0;
+  const raw = [9000, 4500];
+  for (let i = 0; i < 32; i++) raw.push(560, (d >>> i) & 1 ? 1690 : 560);
+  raw.push(560);
+  return raw;
+}
+
+/* ---------- 顯示 ---------- */
+function showCapture() {
+  $('capState').textContent = '已收到一筆訊號';
+  $('capInfo').textContent = `${capture.proto} ${capture.code} · ${capture.raw.length} 段\n` + capture.raw.join(' ');
+  $('save').disabled = false; drawWave(capture.raw);
+}
+function drawWave(raw) {
+  const c = $('wave'), g = c.getContext('2d'); g.clearRect(0, 0, c.width, c.height);
+  const total = raw.reduce((a, b) => a + b, 0) || 1; let x = 0;
+  g.strokeStyle = '#62e6a1'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(0, 60);
+  raw.forEach((d, i) => { const nx = x + d / total * c.width, y = i % 2 === 0 ? 10 : 60; g.lineTo(x, y); g.lineTo(nx, y); x = nx; });
+  g.stroke();
+}
+function persist() { localStorage.setItem('irRecords', JSON.stringify(records)); renderTable(); }
+function renderTable() {
+  const tb = $('tbl').tBodies[0]; tb.innerHTML = '';
+  records.forEach((r, i) => {
+    const tr = tb.insertRow();
+    tr.insertCell().textContent = i + 1;
+    const n = document.createElement('input'); n.value = r.name; n.onchange = () => { r.name = n.value; persist(); };
+    tr.insertCell().appendChild(n);
+    const c = tr.insertCell(); c.className = 'code'; c.textContent = `${r.proto} ${r.code}`;
+    tr.insertCell().textContent = r.raw.length;
+    const a = tr.insertCell(); a.className = 'act';
+    const s = document.createElement('button'); s.textContent = '發送'; s.disabled = !rxChar || !device?.gatt.connected; s.onclick = () => sendRaw(r.raw, r.freq);
+    const d = document.createElement('button'); d.textContent = '刪'; d.className = 'danger'; d.style.marginLeft = '6px'; d.onclick = () => { records.splice(i, 1); persist(); };
+    a.append(s, d);
+  });
+  $('empty').style.display = records.length ? 'none' : 'block';
+}
+function addRecord(cap, name) {
+  records.push({ name: name || 'IR-' + String(records.length + 1).padStart(3, '0'), proto: cap.proto, code: cap.code, freq: cap.freq, raw: cap.raw, time: new Date().toISOString() });
+  persist(); log('已記錄：' + records[records.length - 1].name);
+}
+async function sendRaw(raw, freq) {
+  try {
+    await writeCmd(`SEND,${freq || $('freq').value},${$('rep').value},` + raw.map(v => Math.round(v / 10)).join(','));
+    log('發送中…');
+  } catch (e) { log('傳送失敗：' + e.message); }
+}
+
+/* ---------- 匯出 / 匯入 ---------- */
+function download(name, text, type) {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click(); URL.revokeObjectURL(a.href);
+}
+const stamp = () => new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+$('expJson').onclick = () => records.length ? download(`ir_codes_${stamp()}.json`, JSON.stringify({ unit: 'us', records }, null, 2), 'application/json') : log('沒有記錄可匯出');
+$('expCsv').onclick = () => {
+  if (!records.length) return log('沒有記錄可匯出');
+  const q = s => '"' + String(s).replace(/"/g, '""') + '"';
+  const lines = ['name,protocol,code,carrier_hz,pulses,time,raw_us'];
+  records.forEach(r => lines.push([q(r.name), r.proto, q(r.code), r.freq, r.raw.length, r.time, q(r.raw.join(' '))].join(',')));
+  download(`ir_codes_${stamp()}.csv`, '﻿' + lines.join('\r\n'), 'text/csv');
+};
+$('imp').onclick = () => $('file').click();
+$('file').onchange = async e => {
+  try { const j = JSON.parse(await e.target.files[0].text()); (j.records || []).forEach(r => records.push(r)); persist(); log('已匯入 ' + (j.records || []).length + ' 筆'); }
+  catch (err) { log('匯入失敗：' + err.message); }
+  e.target.value = '';
+};
+$('clear').onclick = () => { if (records.length && confirm('清除全部記錄？')) { records = []; persist(); } };
+
+/* ---------- 事件 ---------- */
+$('connect').onclick = connect;
+$('rec').onclick = () => { wantRec = true; capture = null; $('save').disabled = true; arm(); };
+$('clearCap').onclick = () => {
+  capture = null; incoming = null; $('capInfo').textContent = ''; $('capName').value = ''; $('save').disabled = true;
+  const c = $('wave'); c.getContext('2d').clearRect(0, 0, c.width, c.height);
+  $('capState').textContent = wantRec ? '等待紅外線訊號…' : '已清除';
+};
+$('stop').onclick = () => { wantRec = false; armAt = 0; writeCmd('STOP').catch(e => log('傳送失敗：' + e.message)); };
+$('save').onclick = () => { if (capture) { addRecord(capture, $('capName').value.trim()); $('capName').value = ''; $('save').disabled = true; } };
+$('nSend').onclick = () => sendRaw(buildNec(parseInt($('nAddr').value, 16) & 255, parseInt($('nCmd').value, 16) & 255), +$('freq').value);
+$('nSave').onclick = () => {
+  const a = parseInt($('nAddr').value, 16) & 255, c = parseInt($('nCmd').value, 16) & 255;
+  addRecord({ ...decode(buildNec(a, c)), freq: +$('freq').value, raw: buildNec(a, c) }, 'NEC-' + hex(a) + hex(c));
+};
+
+setInterval(() => {
+  if (!device?.gatt.connected) return;
+  if (incoming && Date.now() - incomingAt > 1500) {  // 通知遺失（IRE 沒到）：放棄這筆並重新接收
+    incoming = null; $('capState').textContent = '通知遺失，已重新接收，請再按一次遙控器';
+    if (wantRec) arm();
+  } else if (wantRec && armAt && Date.now() - armAt > 2000) arm();  // 裝置沒回 REC:ON：重送
+}, 500);
+renderTable();
+</script>
+</body>
+</html>
