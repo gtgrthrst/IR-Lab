@@ -3,6 +3,12 @@
 以 **Raspberry Pi Pico W + MicroPython** 做紅外線遙控器的學習與重播，
 並用瀏覽器（**Web Bluetooth**）操作：按下遙控器 → 擷取波形 → 存成按鍵 → 一鍵重播。
 
+## 操作畫面
+
+<img src="docs/screenshot.jpg" alt="IR-Lab 網頁介面" width="320">
+
+操作影片：[docs/demo.mp4](docs/demo.mp4)（在 GitHub 點開即可播放）
+
 ## 硬體
 
 | 功能 | 腳位 | 說明 |
